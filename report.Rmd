@@ -1,0 +1,424 @@
+---
+title: "Investigating the relationship between socio-economic factors and hate incidents in the US"
+author: "Mohsen Rahimi - 1073078"
+date: "28/06/2021"
+output: pdf_document
+geometry: "left=2.5cm,right=2.5cm,top=2cm,bottom=2cm"
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+```{r import, echo=FALSE, message=FALSE, warning=FALSE}
+getwd()
+setwd("~/Downloads/Data Management for Communication")
+library(tidyverse)
+library(knitr)
+library(skimr)
+library(infer)
+library(moderndive)
+
+hate_crimes <- read_csv("http://bit.ly/2ItxYg3")
+
+```
+
+
+
+```{r glimpse, echo=F, message=FALSE, warning=FALSE, results='hide'}
+# First look at the dataset 
+glimpse(hate_crimes)
+
+# Transforming character variables into factors
+hate_crimes = hate_crimes %>% mutate(state=as.factor(state), median_house_inc=as.factor(median_house_inc), 
+                       trump_support=as.factor(trump_support), unemployment=as.factor(unemployment),
+                       urbanization=as.factor(urbanization), 
+                       share_pop_metro=share_pop_metro*100) # tranform pop metro in %
+
+# Double-checking that the transformation worked
+glimpse(hate_crimes)
+
+
+#Then we select the five categorical variables to take a look at their levels.
+
+
+# Levels of categorical variables 
+hate_crimes %>% select_if(is.factor) %>% map(levels) 
+```
+
+## Introduction
+
+Drawing from a FiveThirtyEight article from Maimuma Majumder, published on the 23rd of January 2017, we look for trends in our data to understand how hate crimes vary among States and what factors might be the strongest predictors for hate crimes. 
+
+Majunder's analysis used multivariate linear regression to understand which variables were significant determinants of population-adjusted hate incidents across the country. They used various socio-economic indicators to assess the independent impact of each one on hate crimes. They found that income inequality is the strongest predictor, and percentage of adults with a high school diploma was also significant (Majumder, 2017). 
+
+They explain this relationship with the fact that anger is generated from seeing your personal situation compared to that of others: when income inequality is high, it is easier to feel like others are doing better than you and this feeds a sentiment of hate towards those who are 'doing better'. 
+
+Hate might also depend on the level of education. Income inequality is tied to the fact that high-school-educated individuals are not able to earn as much as their college-educated neighbors. Unemployment, which is tied to level of education and contributes to income inequalities, could also be a determinant of hate crimes, as people who are unemployed might blame others for their situation - we often hear about immigrants being accused of 'stealing jobs'. 
+
+Hate crimes might also be higher where there is a high level of Trump supporter, due to his populist movement that fed anger towards ethnic minorities in the US. Generally, inequalities are exacerbated in metropolitan areas or where there is a high level or urbanization. Moreover, immigrants and ethnic minorities tend to live in the poorer districts of large metropolitan areas. Therefore we expect that when the share of the population living in metropolitan areas and the level of urbanization increase, hate crimes also increase. 
+
+## Dataset description 
+
+The dataset includes 9 variables:  
+
+* 5 categorical: 
+
+   1. *state*: the name of the US State which the observation belongs to, 51 States in total;
+   2. *median_house_inc*: median household income (categorized into low-high);
+   3. *trump_support*: percent of the population who voted for Donald Trump (categorized into low-medium-high);
+   4. *unemployment*: seasonally adjusted unemployment (categorized into low-high);
+   5. *urbanization*: level of urbanization (categorized into low-high).
+
+* 4 numeric: 
+
+   1. *share_pop_metro*: percent population in metropolitan areas;
+   2. *hs*: percent of adults 25 and older with at least a high school degree;
+   3. *hate_crimes*: average annual hate crimes per 100,000 residents; 
+   4. *income*: median household income.
+
+
+## Variables identification
+
+Based on the previous considerations, we identify **hate_crimes** as the response variable and the following as potential explanatory variables: 
+
+* *income* (we include income and not median_house_income as the latter is based on a categorization of the first one);
+* *share_pop_metro* (which we also use as a proxy for level of urbanization);
+* *hs* ;
+* *trump_support* ;
+* *unemployment* ;
+
+## Exploratory data analysis 
+
+### Summary statistics 
+
+Table 1 (sub-table variable type: factor) shows that the levels for *trump_support* and *unemployment* are evenly distributed across States, with no level being remarkably greater than the others. We can say we are dealing with a 'balanced' dataset. 
+
+The mean for the number of hate crimes is 0.304, with a remarkably lower median of 0.226. The mean family income is 55,224, with a slightly lower median of 54,916. The mean for the percentage of population with at least a high school diploma is 86.8%, with median at 87%. The mean percentage for the share of the population living in metropolitan areas is 75%, with slightly higher median at 79%. 
+
+Table 1 shows that there are missing values in the dataset for the variables *hs* and *hate_crimes*. We apply the imputation method that substitutes NAs with the median for that variable (alternatively we could have chosen to use the mean). We are aware that this might cause our results to be slightly biased, however we prefer this method rather than deletion of observations in order to prevent data loss in a dataset which is already small. 
+
+```{r summary statistics, echo=FALSE, message=FALSE, warning=FALSE}
+summary_table = hate_crimes %>% select(hate_crimes, income, trump_support, unemployment, hs, share_pop_metro) %>% skim() %>% select(-c(numeric.hist, complete_rate,factor.ordered))
+summary_table
+```
+
+```{r replace missing values,echo= F,  message=FALSE, warning=FALSE, results='hide'}
+# Substituting missing values with median
+hate_crimes$hs[is.na(hate_crimes$hs)]<-median(hate_crimes$hs,na.rm=TRUE)
+hate_crimes$hate_crimes[is.na(hate_crimes$hate_crimes)]<-median(hate_crimes$hate_crimes,
+                                                                na.rm=TRUE)
+# Check that this worked
+hate_crimes %>% select(hs, hate_crimes) %>% 
+   summarise(NAs_hs=sum(is.na(hs)), NAs_Hcrimes = sum(is.na(hate_crimes)))
+
+# Get new summary statistics for hate crimes and hs
+hs_hc_summary = hate_crimes %>% select(hs, hate_crimes) %>% skim() %>% 
+   select(-c(numeric.hist, complete_rate))
+hs_hc_summary
+
+# MEDIAN UNCHANGED, MEAN HAS CHANGED 
+```
+
+
+### Data visualization
+
+Figure 1 shows that States with higher crimes are located in the North, such as Oregon (OR), Washington (WA), Minnesota (MN), Maine (ME) and Massachusetts (MA) - and if you zoom in you can see a dark red spot on the right side that corresponds to District of Columbia (DC). States with a lower number of crimes are spread evenly across the country. Some examples are Idaho (ID), Alaska (AK), Arkansas (AR) and New Jersey (NJ). 
+
+```{r US map of hate crimes, echo = F, message=F, warning=F, out.width='100%', fig.cap='Average annual hate crimes per 100,000 residents by US State', fig.show='hold'}
+library(usmap)
+p = plot_usmap(data = hate_crimes, values = 'hate_crimes', 
+               regions = "states", labels=T, size=0.1) + 
+  #labs(title = "Average annual hate crimes per 100,000 residents")+
+       #subtitle = " ") 
+  theme(panel.background=element_blank()) +
+   scale_fill_continuous(low = "gray", high = "darkgreen", name = "N. crimes", label = scales::comma) + 
+   theme(legend.position = "right")
+
+
+# Set label font size
+p$layers[[2]]$aes_params$size <- 1.8
+print(p)
+
+```
+
+Figure 2 shows that there are 3 values in the number of hate crimes that are particularly higher compared to the others. Table 4 shows that the 3 outliers correspond to Oregon, Washington and District of Columbia (DC), with the value for DC being remarkably higher than the others. We also note that these observations have the same levels for median house income, Trump support, unemployment and urbanization.
+
+```{r hate_crime boxplot, echo = F, message=F, warning=F, fig.cap='Distribution of number of hate crimes', fig.align='center', out.width='50%', fig.show='hold'}
+theme_set(theme_bw())
+hate_crimes %>% 
+   ggplot()+
+   geom_boxplot(aes(y=hate_crimes), fill='darkgreen') +
+   theme(legend.position = 'none') +
+   scale_x_discrete() +
+   labs(y='Number of hate crimes per 100,000 residents') 
+```
+
+
+```{r hate crime ouliers, echo = F, message=F, warning=F, fig.show='hold'}
+# Values of the 'outliers'
+outliers = boxplot.stats(hate_crimes$hate_crimes)$out
+# Position of those values in the dataset
+indeces = which(hate_crimes$hate_crimes %in% (outliers))
+# Get corresponding observations in the dataset
+hate_crimes[indeces,] %>% select(state, hate_crimes, median_house_inc, unemployment, trump_support, urbanization) %>% kable(caption = 'Observations classified as outliers based on number of hate crimes')
+```
+
+Table 5 shows a positive correlation between the number of hate crimes and the other three numerical variables. This means that, as (i)median household income, (ii)the percentage of population with a high school diploma and (iii)the percentage of population living in metropolitan areas increase (independently from one another), so will the number of hate crimes. Specifically, the positive relationship is the highest for *income*, followed by *hs* and then *share_pop_metro*. 
+
+
+```{r correlations, echo = F, message=F, warning=F}
+kable(hate_crimes %>% summarise(income = cor(hate_crimes, income), hs=cor(hate_crimes, hs), 
+                          pop_metro = cor(hate_crimes, share_pop_metro)),
+      caption = 'Correlation between hate crimes and chosen numerical explanatory variables.')
+```
+
+Figure 3 shows the covariance between hate crimes and the numerical explanatory variables of our interest, as well as the pairwise covariance between all the numerical variables. We can note a slight positive covariance between the response variable and the explanatory variables. However, the relationship seems to be weak. There is no remarkable trend between the explanatory variables (pairwise), except for the positive covariance between *income* and *hs*. This makes sense as usually more educated people can get higher-paid jobs. 
+
+```{r cor viz, echo = F, message=F, warning=F, fig.cap='Pairwise covariance between numerical variables of interest', fig.align='center', fig.show='hold', out.width='65%'}
+hate_crimes %>% select(hate_crimes, income, hs, share_pop_metro) %>% plot(pch=19, col='darkgreen')
+```
+
+Figure 4 shows that the number of hate crimes increases more sharply with income when the level of unemployment is high. Figure 5 highlights that hate crimes increase with income when Trump support is low and more sharply when it is high. However, when Trump support is medium, hate crimes decrease with income. This is an interesting trend which would need further investigation even in the theoretical setting. Both graphs suggest that an interaction model might be better suited for modeling the observed patterns in our dataset. 
+
+```{r data viz unemp, echo = F, message=F, warning=F, out.width='65%', fig.cap='Hate crimes related to income by level of unemployment', fig.align='center', fig.show='hold'}
+hate_crimes %>% 
+ggplot(aes(x = hate_crimes, y = income, color = unemployment)) +
+  geom_point() +
+  labs(x = "Number of hate crimes per 100,000 residents", y = "Income", color = "Unemployment") +
+  geom_smooth(method = "lm", se = FALSE) +
+   scale_color_manual(values=c('low'='lightgreen', 
+                               'high'='darkgreen'))
+```
+
+```{r data viz trump, echo = F, message=F, warning=F, fig.cap='Hate crimes related to income by level of Trump support', fig.align='center', out.width='65%', fig.show='hold'}
+
+hate_crimes %>%
+ggplot(aes(x = hate_crimes, y = income, color = trump_support)) +
+  geom_point() +
+  labs(x = "Number of hate crimes per 100,000 residents", y = "Income", color = "Trump support") +
+  geom_smooth(method = "lm", se = FALSE)+
+   scale_color_manual(values=c('low'='lightgreen',
+                               'medium'='gray',
+                               'high'='darkgreen'))
+
+```
+
+\newpage
+
+## Regression Model  
+
+```{r model, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+######## checking first the saturated model #########
+# (saturated as we are adding all variables of interest) 
+complete = lm(data=hate_crimes, hate_crimes ~ income+share_pop_metro+hs+ 
+   unemployment+ trump_support)
+summary(complete) # only trump-support-low significant 
+
+########## checking one regressor at a time ########
+income = lm(data=hate_crimes, hate_crimes~income)
+summary(income) # significant 
+
+share_pop = lm(data=hate_crimes, hate_crimes~share_pop_metro)
+summary(share_pop) # not significant 
+
+hs = lm(data=hate_crimes, hate_crimes~hs)
+summary(hs) # significant 
+
+unemployment = lm(data=hate_crimes, hate_crimes~unemployment)
+summary(unemployment) # not significant 
+
+trump = lm(data=hate_crimes, hate_crimes~trump_support)
+summary(trump) # low significant, medium not significant / baseline: high 
+
+###### multiple regression models #########
+mod1 = lm(data=hate_crimes, hate_crimes ~ income+ trump_support+hs+share_pop_metro)
+mod2 = lm(data=hate_crimes, hate_crimes ~ income+trump_support)
+mod2int = lm(data=hate_crimes, hate_crimes ~ income*trump_support)
+mod3 = lm(data=hate_crimes, hate_crimes ~ income+trump_support+unemployment)
+mod4 = lm(data=hate_crimes, hate_crimes ~ income+hs+share_pop_metro)
+mod5= lm(data=hate_crimes, hate_crimes ~ income+hs)
+mod6= lm(data=hate_crimes, hate_crimes ~ income+share_pop_metro)
+mod7 = lm(data=hate_crimes, hate_crimes ~ income*unemployment)
+
+########################################################################
+# F test for adding one variable (order in the model is important) 
+anova(complete) #income and trump support significant 
+anova(mod2) # significant to add trump_support after income
+anova(mod2int) # significant to add trump_support after income BUT NOT THE INTERACTION
+anova(mod3) # not significant to add employment after income and trump
+anova(mod5) # not significant to add hs after income
+anova(mod6) # not significant to add share pop metro after income
+anova(mod7) # not significant to add unemployment after income 
+
+# F test for adding a group of variables
+anova(mod1, mod2) # not significant to add hs and share_pop_metro together (mod1)
+# to the model with income and trump_support (mod2)
+
+
+#########################################################################
+### Best candidate models 
+summary(income) # income is significant 
+summary(mod2) # only trump support low is significant, income is not anymore
+
+# higher R-squared for mod2 compared to income 
+# HOWEVER R-SQUARED ALMOST ALWAYS INCREASES WHEN ADDING NEW REGRESSORS 
+# from a theoretical point of view it doesn't make sense that hate crimes are higher 
+# when the level of trump support is lower, 
+# populists are expected to attack ethnic minorities more often than non populist
+# other reasons for this trend could be that hate crimes are less reported in 
+# states where trump support level is higher
+
+```
+
+After running an in-depth analysis of variance (ANOVA) to choose the regressors that better represent the relationship found in our dataset (see muted code chunk in Rmarkdown script), we chose the basic regression with *income* as the unique explanatory variable. We found that adding other regressors was not statistically significant to explain the observed variation. 
+
+The only exception was Trump support. We found that inserting level of Trump support (without interaction) to the basic model with income is statistically significant. However, only the coefficient for the 'low' level is statistically significant at alpha=0.05 when taking 'high' as baseline, while there is no significant difference between 'high' and 'medium'. Moreover, the coefficient for income in this case is not significant at alpha=0.05. Besides the statistical considerations made, we decide to reject this model mainly because of the theoretical setting of our problem. The model suggests that, ceteris paribus, hate crimes are higher when the level of Trump support is low. We would expect the opposite relationship as populist movements might feed more hate towards ethnic minorities, therefore increasing the number of hate crimes. It might be plausible that in States where the level of Trump support is higher there are also fewer hate crimes reported, possibly due to the fact that the police itself is also making discrimination towards minorities. The pattern found in this model clearly needs further investigation in the theoretical setting, therefore we proceed by considering the basic regression as the best model. 
+
+### Residual analysis 
+
+After selecting the model that best explains the relationship found in our dataset, we run a residual analysis to check the robustness of our findings. 
+
+1. *Linearity*
+
+Figure 6 shows that overall there is a linear relationship between *income* and *hate_crimes*, however there is one remarkable outlier which corresponds to the observation for DC and for which the linearity of the relationship might not hold. Therefore this assumption is not fully satisfied if the outlier is not removed. 
+
+```{r linearity, echo=FALSE, warning=FALSE, message=FALSE, fig.show='hold',  fig.cap="Relationship between Income and Hate Crimes with fitted points in black", fig.align='center', out.width='60%'}
+fitted = fitted(income)
+
+ggplot(hate_crimes, aes(x = income, y = hate_crimes)) +
+   geom_point(col='green') +
+ labs(x = "Income", y = "Hate Crimes") +  
+   geom_smooth(method = "lm", se = FALSE, col='gray') +
+   theme(legend.position = 'none')+
+   geom_point(aes(x = income, y = fitted), col="black") 
+```
+
+2. *Independence*
+
+Our observations are all independent from one another as measurements were taken independently for each state. 
+
+3. *Normality*
+
+Figure 7 shows that the residuals are not normally distributed. Again, the outlier for DC seems to play an important role. The results from the Shapiro-Wilk test for normality (Table 6) show that indeed our model residuals are not normally distributed (p-value lower than 0.05). The normality assumption is not satisfied. 
+
+```{r residual normality, echo=FALSE, warning=FALSE, message=FALSE, fig.cap='Distribution of residuals', fig.show='hold', fig.align='center', out.width='60%'}
+residuals = residuals(income)
+hist(residuals, col = 'darkgreen', xlab='Residuals', main=NULL)
+```
+
+```{r shapiro, echo=FALSE, warning=FALSE, message=FALSE}
+stest= shapiro.test(residuals) # residuals are not normally distributed 
+kable(tibble(statistic = c('W', 'p-value'),
+   value = c(stest$statistic, stest$p.value)), caption = 'Results from Shapiro-Wilk normality test')
+```
+
+
+4. *Equality of variance*
+
+From Figure 8 we see that there is heteroskedasticity in the distribution of our residuals. Indeed, the magnitude of the residuals seems to increase as income increases. 
+
+```{r residual variance, echo=FALSE, warning=FALSE, message=FALSE, fig.cap='Variation of residuals according to income', fig.align='center', out.width='60%'}
+plot(hate_crimes$income, residuals, xlab='Income', ylab='Residuals',pch=19, col='darkgreen')
+abline(h=0)
+```
+
+Our findings  suggest that a transformation of our variables might be better suited to plot the relationship between income and the number of hate crimes. Specifically, we apply a logarithmic transformation to account for the steep increase in the value of hate crime observed for DC. We then proceed to the residual analysis to check the robustness of our second model, where logarithm of hate crime is our response variable and income is our unique explanatory variable. 
+
+\newpage 
+
+### Residual analysis for basic regression with log-transformed hate crime
+
+1. *Linearity*
+
+Figure 9 shows that there is an increasing linear relationship between Income and Log hate crimes, confirming that a linear regression can be appropriate to model this relationship. 
+
+```{r log model linearity,echo=FALSE, warning=FALSE, message=FALSE, fig.show='hold', fig.cap='Relationship between log-tranformed hate crimes and income, with estimated regression points in black', fig.align='center', out.width='60%'}
+
+hate_crimes = hate_crimes %>% mutate(logHC = log(hate_crimes))
+
+logmod = lm(data=hate_crimes, logHC ~ income )
+
+fittedlog = fitted(logmod)
+hate_crimes %>% 
+ggplot(aes(x=income, y=logHC))+
+   geom_point(col='green')+
+   geom_smooth(method='lm', se=F, col='gray') +
+   geom_point(aes(x=income, y=fittedlog), col='black')+
+   labs(y='Log Hate Crimes', x='Income') +
+   theme(legend.position = 'none')
+   
+
+```
+
+2. *Independence*
+
+The independence assumption is satisfied because each Sate represents an independent observation. 
+
+3. *Normality*
+
+The histogram in Figure 10 shows that residuals are more normally distributed compared to the previous model. Results from the Shapiro-Wilk test reported in Table 7 confirm that residuals are normally distributed (as p>0.05).
+
+```{r log model normality,echo=FALSE, warning=FALSE, message=FALSE, fig.show='hold', fig.cap='Distribution of residuals', fig.align='center', out.width='60%'}
+reslog = residuals(logmod)
+hist(reslog, col='darkgreen', xlab = 'Residuals', main = NULL)
+```
+
+```{r shapiro log,echo=FALSE, warning=FALSE, message=FALSE }
+shapiro = shapiro.test(reslog)
+kable(tibble(statistic = c('W', 'p-value'),
+   value = c(shapiro$statistic, shapiro$p.value)), caption = 'Results from Shapiro-Wilk normality test')
+```
+
+4. *Equality of variance*
+
+Figure 11 shows homoskedasticity in the distribution of residuals, as the number of positive residuals is similar to that of negative residuals and they are randomly distributed around the zero value.
+
+```{r log residual variance, echo=FALSE, warning=FALSE, message=FALSE, fig.cap='Variation of residuals according to income', fig.align='center', out.width='60%'}
+plot(hate_crimes$income, reslog, xlab='Income', ylab='Residuals', 
+     pch=19, col='darkgreen')
+abline(h=0)
+```
+
+As all four assumptions are satisfied, we can state that the basic regression model where the response variable has been log-transformed is the model that best represents the relationship found in our dataset. 
+
+\newpage
+
+### Comment on estimated parameters
+
+As shown in Table 8, our final model estimates a 2.4% increase in the average annual number of hate crimes per 100,000 residents for every \$1,000 increase in the median household income. 95% confidence intervals for the estimated parameter are also reported in Table 8. We expect 95% of the reported interval to contain the true value of our estimated parameter. This means that, for every increase in \$1,000 in income, the real increase in number of hate crimes could assume any value in between 0.5% and 4.2%. We can state that the change in income has an effect on the change in hate crimes as our CI does not contain the value 0. 
+
+A final important remark is that, although the parameters are significant at the 95% confidence level (p-value<0.05), the value for the  adjusted R-squared is equal to 0.09. Hence the fit of our log-linear model is very poor. This means that income on its own might not be the best variable to explain the variation in hate crimes. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+kable(get_regression_table(logmod, digits = 6), caption= 'Model summary')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+ci_lower = 0.00002366 - 1.96*0.000009490
+ci_upper = 0.00002366 + 1.96*0.000009490
+kable(tibble(CI = c('Lower', 'Upper'), 
+       value = c(ci_lower, ci_upper)), caption= 'Confidence interval for the estimated beta parameter')
+
+# Coedfficient interpretation
+#exp(0.00002366) # beta
+#exp(0.00000510) # low CI
+#exp(0.0000423) # high CI
+```
+
+\newpage
+
+## Conclusion
+
+The positive relationship we found between income and hate crime should be carefully interpreted. In fact our analysis is full of limitations. First of all, we highlight that the relationship we found does not imply causation, therefore the increase in income might not be itself the cause of the increase in hate incidents. Given the low fit of our model, other economic drivers that were excluded from our analysis should be identified to explain the variation in hate crimes across US States. More information on the data collection process should also be gathered to control for disturbance and allow for causal inferences (although synthetic experiments are usually needed). 
+
+Moreover, our results might be biased because of the imputation method used to substitute missing variables. Ideally, the analysis should be run again on a complete dataset. It is also possible that the dataset is not truly representative of hate incidents across the United States, as whether people report or do not report hate incidents might vary across States. This means that States with residents and law enforcement agencies that are more likely to report hate crimes might be overrepresented, and States which do not report as much will be underrepresented. 
+
+All things considered, the relationship we found is significant but not exhaustive and the problem should be further investigated considering the limitations that we reported.
+
+
+## Reference
+
+Majumder, M. (2017, January 23). Higher Rates Of Hate Crimes Are Tied To Income Inequality. FiveThirtyEight. https://fivethirtyeight.com/features/higher-rates-of-hate-crimes-are-tied-to- income-inequality/ 
